@@ -6,16 +6,12 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 
 public class DictionaryLoader {
-    /**
-     * Loads words from a file into the Trie
-     * @param trie The Trie to load words into
-     * @param filePath The file path to load words from
-     * @throws IOException If there's an error reading the file
-     */
     public static void loadFromFile(Trie trie, String filePath) throws IOException {
         try (BufferedReader reader = Files.newBufferedReader(Paths.get(filePath))) {
             String line;
@@ -28,16 +24,9 @@ public class DictionaryLoader {
         }
     }
 
-    /**
-     * Loads words from a resource file into the Trie
-     * @param trie The Trie to load words into
-     * @param resourcePath The resource path to load words from
-     * @throws IOException If there's an error reading the resource
-     */
     public static void loadFromResource(Trie trie, String resourcePath) throws IOException {
         try (InputStream is = DictionaryLoader.class.getResourceAsStream(resourcePath);
              BufferedReader reader = new BufferedReader(new InputStreamReader(is))) {
-
             String line;
             while ((line = reader.readLine()) != null) {
                 String word = line.trim();
@@ -48,14 +37,8 @@ public class DictionaryLoader {
         }
     }
 
-    /**
-     * Loads a default set of common English words into the Trie
-     * @param trie The Trie to load words into
-     */
     public static void loadDefaultDictionary(Trie trie) {
         Set<String> commonWords = new HashSet<>();
-
-        // A small set of common English words for demonstration
         String[] words = {
                 "apple", "application", "apply", "appreciate", "approach", "appropriate",
                 "banana", "band", "bank", "bar", "base", "baseball", "basic", "basis", "basket",
@@ -79,9 +62,54 @@ public class DictionaryLoader {
                 "water", "wave", "way", "we", "weak", "wealth", "wealthy", "weapon", "wear",
                 "yesterday", "yet", "yield", "you", "young", "your", "yours", "yourself", "youth"
         };
-
         for (String word : words) {
             trie.insert(word);
+        }
+    }
+
+    public static void loadCorpus(Trie trie, Map<String, Map<String, Integer>> bigrams, String corpusPath) throws IOException {
+        try (BufferedReader reader = Files.newBufferedReader(Paths.get(corpusPath))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                String[] words = line.toLowerCase().replaceAll("[^a-z ]", "").split("\\s+");
+                for (int i = 0; i < words.length - 1; i++) {
+                    String prev = words[i];
+                    String next = words[i + 1];
+                    if (!prev.isEmpty() && !next.isEmpty()) {
+                        bigrams.computeIfAbsent(prev, k -> new HashMap<>()).merge(next, 1, Integer::sum);
+                        trie.insert(prev);
+                        trie.insert(next);
+                    }
+                }
+            }
+        }
+    }
+
+    public static void loadDefaultCorpus(Trie trie, Map<String, Map<String, Integer>> bigrams) {
+        String[] sentences = {
+                "hello world",
+                "hello there",
+                "good morning",
+                "good afternoon",
+                "thank you",
+                "please help",
+                "computer science",
+                "data structure",
+                "java programming",
+                "apple banana",
+                "knowledge is power",
+                "network connection",
+                "software development"
+        };
+        for (String sentence : sentences) {
+            String[] words = sentence.toLowerCase().split("\\s+");
+            for (int i = 0; i < words.length - 1; i++) {
+                String prev = words[i];
+                String next = words[i + 1];
+                bigrams.computeIfAbsent(prev, k -> new HashMap<>()).merge(next, 1, Integer::sum);
+                trie.insert(prev);
+                trie.insert(next);
+            }
         }
     }
 }
