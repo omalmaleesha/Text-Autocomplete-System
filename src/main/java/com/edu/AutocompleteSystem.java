@@ -1,25 +1,30 @@
 package com.edu;
 
+import java.io.BufferedWriter;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
 import java.util.*;
+import java.util.concurrent.*;
 
 public class AutocompleteSystem {
     private final Trie trie;
-    private final int maxSuggestions;
-    private final Map<String, Map<String, Integer>> bigrams; // For context-aware suggestions
+    int maxSuggestions;
+    private final Map<String, Map<String, Integer>> bigrams;
+    private final ExecutorService executor = Executors.newSingleThreadExecutor();
+    int fuzzyDistance = 1;
 
-    /**
-     * Creates a new AutocompleteSystem with the given dictionary and corpus files
-     * @param dictionaryPath Path to the dictionary file
-     * @param corpusPath Path to the corpus file for bigrams (optional)
-     * @param maxSuggestions Maximum number of suggestions to return
-     * @throws IOException If there's an error loading files
-     */
     public AutocompleteSystem(String dictionaryPath, String corpusPath, int maxSuggestions) throws IOException {
         this.trie = new Trie();
-        this.bigrams = new HashMap<>();
         this.maxSuggestions = maxSuggestions;
+        this.bigrams = new HashMap<>();
         DictionaryLoader.loadFromFile(trie, dictionaryPath);
+        try {
+            DictionaryLoader.loadFromFile(trie, "user_dictionary.txt");
+        } catch (IOException e) {
+            // Ignore if user dictionary doesn't exist
+        }
         if (corpusPath != null && !corpusPath.isEmpty()) {
             DictionaryLoader.loadCorpus(trie, bigrams, corpusPath);
         } else {
@@ -27,34 +32,34 @@ public class AutocompleteSystem {
         }
     }
 
-    /**
-     * Creates a new AutocompleteSystem with default dictionary and max suggestions
-     * @param maxSuggestions Maximum number of suggestions to return
-     */
     public AutocompleteSystem(int maxSuggestions) {
         this.trie = new Trie();
-        this.bigrams = new HashMap<>();
         this.maxSuggestions = maxSuggestions;
+        this.bigrams = new HashMap<>();
         DictionaryLoader.loadDefaultDictionary(trie);
+        try {
+            DictionaryLoader.loadFromFile(trie, "user_dictionary.txt");
+        } catch (IOException e) {
+            // Ignore
+        }
         DictionaryLoader.loadDefaultCorpus(trie, bigrams);
     }
 
-    /**
-     * Adds a new word to the autocomplete system
-     * @param word The word to add
-     */
     public void addWord(String word) {
         if (word != null && !word.isEmpty()) {
             trie.insert(word);
+            try (BufferedWriter writer = Files.newBufferedWriter(Paths.get("user_dictionary.txt"), StandardOpenOption.APPEND, StandardOpenOption.CREATE)) {
+                writer.write(word + "\n");
+            } catch (IOException e) {
+                System.err.println("Error writing to user dictionary: " + e.getMessage());
+            }
         }
     }
 
-    /**
-     * Gets autocomplete suggestions for a prefix with optional context
-     * @param prefix The prefix to get suggestions for
-     * @param context The previous word for context-aware suggestions (optional)
-     * @return A list of suggested words
-     */
+    public CompletableFuture<List<String>> getSuggestionsAsync(String prefix, String context) {
+        return CompletableFuture.supplyAsync(() -> getSuggestions(prefix, context), executor);
+    }
+
     public List<String> getSuggestions(String prefix, String context) {
         if (prefix == null || prefix.isEmpty()) {
             return Collections.emptyList();
@@ -69,27 +74,19 @@ public class AutocompleteSystem {
         return getRegularSuggestions(prefix);
     }
 
-    /**
-     * Gets regular suggestions combining exact, fuzzy, and phonetic matches
-     * @param prefix The prefix to get suggestions for
-     * @return A list of suggested words
-     */
     private List<String> getRegularSuggestions(String prefix) {
-        // Get exact matches first
         List<String> exact = trie.getSuggestions(prefix, maxSuggestions);
         if (exact.size() >= maxSuggestions) {
             return exact;
         }
 
-        // Supplement with fuzzy matches (Levenshtein distance)
         Set<String> allSuggestions = new LinkedHashSet<>(exact);
-        List<String> fuzzy = trie.getFuzzySuggestions(prefix, 1, maxSuggestions - exact.size());
+        List<String> fuzzy = trie.getFuzzySuggestions(prefix, fuzzyDistance, maxSuggestions - exact.size());
         for (String f : fuzzy) {
             if (allSuggestions.size() >= maxSuggestions) break;
             allSuggestions.add(f);
         }
 
-        // If still fewer, add phonetic matches (Soundex)
         if (allSuggestions.size() < maxSuggestions) {
             List<String> phonetic = trie.getPhoneticSuggestions(prefix, maxSuggestions - allSuggestions.size());
             for (String p : phonetic) {
@@ -101,57 +98,42 @@ public class AutocompleteSystem {
         return new ArrayList<>(allSuggestions);
     }
 
-    /**
-     * Gets context-aware suggestions using bigrams
-     * @param prefix The prefix to get suggestions for
-     * @param context The previous word
-     * @return A list of context-aware suggested words
-     */
     private List<String> getContextSuggestions(String prefix, String context) {
-        List<String> candidates = trie.getSuggestions(prefix, Integer.MAX_VALUE); // All exact matches
-        Map<String, Integer> following = bigrams.getOrDefault(context.toLowerCase(), Collections.emptyMap());
+        Map<String, Integer> nextWords = bigrams.getOrDefault(context.toLowerCase(), Collections.emptyMap());
+        if (nextWords.isEmpty()) {
+            return getRegularSuggestions(prefix);
+        }
 
-        // Separate candidates into context-relevant and others
-        List<Map.Entry<String, Integer>> withContext = new ArrayList<>();
-        List<String> withoutContext = new ArrayList<>();
-
-        for (String candidate : candidates) {
-            int bigramFreq = following.getOrDefault(candidate, 0);
-            if (bigramFreq > 0) {
-                withContext.add(new AbstractMap.SimpleEntry<>(candidate, bigramFreq));
-            } else {
-                withoutContext.add(candidate);
+        List<String> exactMatches = trie.getSuggestions(prefix, Integer.MAX_VALUE);
+        PriorityQueue<Map.Entry<String, Integer>> pq =
+                new PriorityQueue<>((a, b) -> Integer.compare(b.getValue(), a.getValue()));
+        for (String word : exactMatches) {
+            int freq = nextWords.getOrDefault(word.toLowerCase(), 0);
+            if (freq > 0) {
+                pq.offer(new AbstractMap.SimpleEntry<>(word, freq));
             }
         }
 
-        // Sort context-relevant by bigram frequency
-        withContext.sort((a, b) -> Integer.compare(b.getValue(), a.getValue()));
-
-        // Sort others by word frequency
-        List<Map.Entry<String, Integer>> withoutContextScored = new ArrayList<>();
-        for (String word : withoutContext) {
-            int freq = trie.getFrequency(word);
-            withoutContextScored.add(new AbstractMap.SimpleEntry<>(word, freq));
-        }
-        withoutContextScored.sort((a, b) -> Integer.compare(b.getValue(), a.getValue()));
-
-        // Combine results
         List<String> suggestions = new ArrayList<>();
-        for (Map.Entry<String, Integer> entry : withContext) {
-            suggestions.add(entry.getKey());
-        }
-        for (Map.Entry<String, Integer> entry : withoutContextScored) {
-            suggestions.add(entry.getKey());
+        while (!pq.isEmpty() && suggestions.size() < maxSuggestions) {
+            suggestions.add(pq.poll().getKey());
         }
         return suggestions;
     }
 
-    /**
-     * Checks if a word exists in the system
-     * @param word The word to check
-     * @return true if the word exists, false otherwise
-     */
     public boolean containsWord(String word) {
         return trie.search(word);
+    }
+
+    public void shutdown() {
+        executor.shutdown();
+    }
+
+    public List<String> getCorrections(String prefix) {
+        List<String> fuzzy = trie.getFuzzySuggestions(prefix, fuzzyDistance, 5);
+        List<String> phonetic = trie.getPhoneticSuggestions(prefix, 5);
+        Set<String> corrections = new LinkedHashSet<>(fuzzy);
+        corrections.addAll(phonetic);
+        return new ArrayList<>(corrections).subList(0, Math.min(5, corrections.size()));
     }
 }
