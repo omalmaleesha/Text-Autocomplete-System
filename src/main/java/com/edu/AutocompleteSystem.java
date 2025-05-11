@@ -1,22 +1,29 @@
 package com.edu;
 
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
 import java.util.*;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.*;
 
 public class AutocompleteSystem {
     private final Trie trie;
-    final int maxSuggestions;
+    int maxSuggestions;
     private final Map<String, Map<String, Integer>> bigrams;
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
+    int fuzzyDistance = 1;
 
     public AutocompleteSystem(String dictionaryPath, String corpusPath, int maxSuggestions) throws IOException {
         this.trie = new Trie();
-        this.bigrams = new HashMap<>();
         this.maxSuggestions = maxSuggestions;
+        this.bigrams = new HashMap<>();
         DictionaryLoader.loadFromFile(trie, dictionaryPath);
+        try {
+            DictionaryLoader.loadFromFile(trie, "user_dictionary.txt");
+        } catch (IOException e) {
+            // Ignore if user dictionary doesn't exist
+        }
         if (corpusPath != null && !corpusPath.isEmpty()) {
             DictionaryLoader.loadCorpus(trie, bigrams, corpusPath);
         } else {
@@ -26,15 +33,25 @@ public class AutocompleteSystem {
 
     public AutocompleteSystem(int maxSuggestions) {
         this.trie = new Trie();
-        this.bigrams = new HashMap<>();
         this.maxSuggestions = maxSuggestions;
+        this.bigrams = new HashMap<>();
         DictionaryLoader.loadDefaultDictionary(trie);
+        try {
+            DictionaryLoader.loadFromFile(trie, "user_dictionary.txt");
+        } catch (IOException e) {
+            // Ignore
+        }
         DictionaryLoader.loadDefaultCorpus(trie, bigrams);
     }
 
     public void addWord(String word) {
         if (word != null && !word.isEmpty()) {
             trie.insert(word);
+            try (BufferedWriter writer = Files.newBufferedWriter(Paths.get("user_dictionary.txt"), StandardOpenOption.APPEND, StandardOpenOption.CREATE)) {
+                writer.write(word + "\n");
+            } catch (IOException e) {
+                System.err.println("Error writing to user dictionary: " + e.getMessage());
+            }
         }
     }
 
@@ -63,7 +80,7 @@ public class AutocompleteSystem {
         }
 
         Set<String> allSuggestions = new LinkedHashSet<>(exact);
-        List<String> fuzzy = trie.getFuzzySuggestions(prefix, 1, maxSuggestions - exact.size());
+        List<String> fuzzy = trie.getFuzzySuggestions(prefix, fuzzyDistance, maxSuggestions - exact.size());
         for (String f : fuzzy) {
             if (allSuggestions.size() >= maxSuggestions) break;
             allSuggestions.add(f);
@@ -81,36 +98,24 @@ public class AutocompleteSystem {
     }
 
     private List<String> getContextSuggestions(String prefix, String context) {
-        List<String> candidates = trie.getSuggestions(prefix, Integer.MAX_VALUE);
-        Map<String, Integer> following = bigrams.getOrDefault(context.toLowerCase(), Collections.emptyMap());
+        Map<String, Integer> nextWords = bigrams.getOrDefault(context.toLowerCase(), Collections.emptyMap());
+        if (nextWords.isEmpty()) {
+            return getRegularSuggestions(prefix);
+        }
 
-        List<Map.Entry<String, Integer>> withContext = new ArrayList<>();
-        List<String> withoutContext = new ArrayList<>();
-
-        for (String candidate : candidates) {
-            int bigramFreq = following.getOrDefault(candidate, 0);
-            if (bigramFreq > 0) {
-                withContext.add(new AbstractMap.SimpleEntry<>(candidate, bigramFreq));
-            } else {
-                withoutContext.add(candidate);
+        List<String> exactMatches = trie.getSuggestions(prefix, Integer.MAX_VALUE);
+        PriorityQueue<Map.Entry<String, Integer>> pq =
+                new PriorityQueue<>((a, b) -> Integer.compare(b.getValue(), a.getValue()));
+        for (String word : exactMatches) {
+            int freq = nextWords.getOrDefault(word.toLowerCase(), 0);
+            if (freq > 0) {
+                pq.offer(new AbstractMap.SimpleEntry<>(word, freq));
             }
         }
 
-        withContext.sort((a, b) -> Integer.compare(b.getValue(), a.getValue()));
-
-        List<Map.Entry<String, Integer>> withoutContextScored = new ArrayList<>();
-        for (String word : withoutContext) {
-            int freq = trie.getFrequency(word);
-            withoutContextScored.add(new AbstractMap.SimpleEntry<>(word, freq));
-        }
-        withoutContextScored.sort((a, b) -> Integer.compare(b.getValue(), a.getValue()));
-
         List<String> suggestions = new ArrayList<>();
-        for (Map.Entry<String, Integer> entry : withContext) {
-            suggestions.add(entry.getKey());
-        }
-        for (Map.Entry<String, Integer> entry : withoutContextScored) {
-            suggestions.add(entry.getKey());
+        while (!pq.isEmpty() && suggestions.size() < maxSuggestions) {
+            suggestions.add(pq.poll().getKey());
         }
         return suggestions;
     }
@@ -121,5 +126,13 @@ public class AutocompleteSystem {
 
     public void shutdown() {
         executor.shutdown();
+    }
+
+    public List<String> getCorrections(String prefix) {
+        List<String> fuzzy = trie.getFuzzySuggestions(prefix, fuzzyDistance, 5);
+        List<String> phonetic = trie.getPhoneticSuggestions(prefix, 5);
+        Set<String> corrections = new LinkedHashSet<>(fuzzy);
+        corrections.addAll(phonetic);
+        return new ArrayList<>(corrections).subList(0, Math.min(5, corrections.size()));
     }
 }

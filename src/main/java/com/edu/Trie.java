@@ -13,13 +13,13 @@ public class Trie {
         if (word == null || word.isEmpty()) {
             return;
         }
-
         TrieNode current = root;
         for (char c : word.toLowerCase().toCharArray()) {
             current.getChildren().putIfAbsent(c, new TrieNode());
             current = current.getChildren().get(c);
         }
         current.setEndOfWord(true);
+        current.setOriginalWord(word);
         current.incrementFrequency();
     }
 
@@ -60,11 +60,11 @@ public class Trie {
             return Collections.emptyList();
         }
 
+        Map<String, Integer> suggestions = new HashMap<>();
+        findAllWords(prefixNode, suggestions);
+
         PriorityQueue<Map.Entry<String, Integer>> pq =
                 new PriorityQueue<>(Comparator.comparingInt(Map.Entry::getValue));
-        Map<String, Integer> suggestions = new HashMap<>();
-        findAllWords(prefixNode, new StringBuilder(prefix), suggestions);
-
         for (Map.Entry<String, Integer> entry : suggestions.entrySet()) {
             pq.offer(entry);
             if (pq.size() > limit) {
@@ -79,15 +79,12 @@ public class Trie {
         return result;
     }
 
-    private void findAllWords(TrieNode node, StringBuilder prefix, Map<String, Integer> suggestions) {
+    private void findAllWords(TrieNode node, Map<String, Integer> suggestions) {
         if (node.isEndOfWord()) {
-            suggestions.put(prefix.toString(), node.getFrequency());
+            suggestions.put(node.getOriginalWord(), node.getFrequency());
         }
-        for (Map.Entry<Character, TrieNode> entry : node.getChildren().entrySet()) {
-            char c = entry.getKey();
-            prefix.append(c);
-            findAllWords(entry.getValue(), prefix, suggestions);
-            prefix.deleteCharAt(prefix.length() - 1);
+        for (TrieNode child : node.getChildren().values()) {
+            findAllWords(child, suggestions);
         }
     }
 
@@ -103,7 +100,7 @@ public class Trie {
         }
 
         List<Map.Entry<String, Integer>> candidates = new ArrayList<>();
-        fuzzySearch(root, new StringBuilder(), prefix, vector, maxDistance, candidates);
+        fuzzySearch(root, "", prefix, vector, maxDistance, candidates);
 
         candidates.sort((a, b) -> Integer.compare(b.getValue(), a.getValue()));
         List<String> suggestions = new ArrayList<>();
@@ -113,10 +110,10 @@ public class Trie {
         return suggestions;
     }
 
-    private void fuzzySearch(TrieNode node, StringBuilder currentPrefix, String prefix,
+    private void fuzzySearch(TrieNode node, String currentPrefix, String prefix,
                              int[] vector, int maxDistance, List<Map.Entry<String, Integer>> results) {
         if (vector[prefix.length()] <= maxDistance) {
-            collectWords(node, new StringBuilder(currentPrefix), results);
+            collectWords(node, results);
         }
 
         for (Map.Entry<Character, TrieNode> entry : node.getChildren().entrySet()) {
@@ -130,21 +127,16 @@ public class Trie {
                 newVector[j] = Math.min(Math.min(newVector[j - 1] + 1, vector[j] + 1), vector[j - 1] + cost);
             }
 
-            currentPrefix.append(c);
-            fuzzySearch(child, currentPrefix, prefix, newVector, maxDistance, results);
-            currentPrefix.deleteCharAt(currentPrefix.length() - 1);
+            fuzzySearch(child, currentPrefix + c, prefix, newVector, maxDistance, results);
         }
     }
 
-    private void collectWords(TrieNode node, StringBuilder prefix, List<Map.Entry<String, Integer>> results) {
+    private void collectWords(TrieNode node, List<Map.Entry<String, Integer>> results) {
         if (node.isEndOfWord()) {
-            results.add(new AbstractMap.SimpleEntry<>(prefix.toString(), node.getFrequency()));
+            results.add(new AbstractMap.SimpleEntry<>(node.getOriginalWord(), node.getFrequency()));
         }
-        for (Map.Entry<Character, TrieNode> entry : node.getChildren().entrySet()) {
-            char c = entry.getKey();
-            prefix.append(c);
-            collectWords(entry.getValue(), prefix, results);
-            prefix.deleteCharAt(prefix.length() - 1);
+        for (TrieNode child : node.getChildren().values()) {
+            collectWords(child, results);
         }
     }
 
@@ -156,7 +148,7 @@ public class Trie {
         prefix = prefix.toLowerCase();
         String prefixSoundex = soundex(prefix);
         List<Map.Entry<String, Integer>> candidates = new ArrayList<>();
-        collectPhoneticWords(root, new StringBuilder(), prefixSoundex, candidates);
+        collectPhoneticWords(root, prefixSoundex, candidates);
 
         candidates.sort((a, b) -> Integer.compare(b.getValue(), a.getValue()));
         List<String> suggestions = new ArrayList<>();
@@ -166,53 +158,50 @@ public class Trie {
         return suggestions;
     }
 
-    private void collectPhoneticWords(TrieNode node, StringBuilder currentWord, String targetSoundex,
-                                      List<Map.Entry<String, Integer>> results) {
+    private void collectPhoneticWords(TrieNode node, String targetSoundex, List<Map.Entry<String, Integer>> results) {
         if (node.isEndOfWord()) {
-            String word = currentWord.toString();
-            if (soundex(word).equals(targetSoundex)) {
-                results.add(new AbstractMap.SimpleEntry<>(word, node.getFrequency()));
+            String originalWord = node.getOriginalWord();
+            if (soundex(originalWord).equals(targetSoundex)) {
+                results.add(new AbstractMap.SimpleEntry<>(originalWord, node.getFrequency()));
             }
         }
-        for (Map.Entry<Character, TrieNode> entry : node.getChildren().entrySet()) {
-            char c = entry.getKey();
-            currentWord.append(c);
-            collectPhoneticWords(entry.getValue(), currentWord, targetSoundex, results);
-            currentWord.deleteCharAt(currentWord.length() - 1);
+        for (TrieNode child : node.getChildren().values()) {
+            collectPhoneticWords(child, targetSoundex, results);
         }
     }
 
     private String soundex(String s) {
         if (s == null || s.isEmpty()) return "";
-        char[] x = s.toUpperCase().toCharArray();
-        char firstLetter = x[0];
-        for (int i = 0; i < x.length; i++) {
-            switch (x[i]) {
-                case 'B': case 'F': case 'P': case 'V': x[i] = '1'; break;
-                case 'C': case 'G': case 'J': case 'K': case 'Q': case 'S': case 'X': case 'Z': x[i] = '2'; break;
-                case 'D': case 'T': x[i] = '3'; break;
-                case 'L': x[i] = '4'; break;
-                case 'M': case 'N': x[i] = '5'; break;
-                case 'R': x[i] = '6'; break;
-                default: x[i] = '0'; break;
+        s = s.toUpperCase();
+        StringBuilder code = new StringBuilder().append(s.charAt(0));
+        char prevCode = getSoundexCode(s.charAt(0));
+        for (int i = 1; i < s.length() && code.length() < 4; i++) {
+            char currentCode = getSoundexCode(s.charAt(i));
+            if (currentCode != '0' && currentCode != prevCode) {
+                code.append(currentCode);
             }
+            prevCode = currentCode;
         }
-        StringBuilder output = new StringBuilder("" + firstLetter);
-        int prevCode = x[0];
-        for (int i = 1; i < x.length && output.length() < 4; i++) {
-            if (x[i] != '0' && x[i] != prevCode) {
-                output.append(x[i]);
-            }
-            prevCode = x[i];
+        while (code.length() < 4) {
+            code.append('0');
         }
-        while (output.length() < 4) {
-            output.append('0');
+        return code.toString();
+    }
+
+    private char getSoundexCode(char c) {
+        switch (Character.toUpperCase(c)) {
+            case 'B': case 'F': case 'P': case 'V': return '1';
+            case 'C': case 'G': case 'J': case 'K': case 'Q': case 'S': case 'X': case 'Z': return '2';
+            case 'D': case 'T': return '3';
+            case 'L': return '4';
+            case 'M': case 'N': return '5';
+            case 'R': return '6';
+            default: return '0';
         }
-        return output.toString();
     }
 
     public int getFrequency(String word) {
-        TrieNode node = getNode(word);
+        TrieNode node = getNode(word.toLowerCase());
         if (node != null && node.isEndOfWord()) {
             return node.getFrequency();
         }

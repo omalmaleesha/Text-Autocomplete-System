@@ -6,12 +6,14 @@ import java.util.Map;
 public class TrieNode {
     private final Map<Character, TrieNode> children;
     private boolean isEndOfWord;
-    private int frequency;  // Tracks how many times this word has been seen
+    private int frequency;
+    private String originalWord;
 
     public TrieNode() {
         this.children = new HashMap<>();
         this.isEndOfWord = false;
         this.frequency = 0;
+        this.originalWord = null;
     }
 
     public Map<Character, TrieNode> getChildren() {
@@ -32,5 +34,13 @@ public class TrieNode {
 
     public void incrementFrequency() {
         this.frequency++;
+    }
+
+    public String getOriginalWord() {
+        return originalWord;
+    }
+
+    public void setOriginalWord(String originalWord) {
+        this.originalWord = originalWord;
     }
 }
