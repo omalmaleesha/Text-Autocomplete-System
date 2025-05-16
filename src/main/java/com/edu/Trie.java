@@ -38,7 +38,7 @@ public class Trie {
         return getNode(prefix.toLowerCase()) != null;
     }
 
-    private TrieNode getNode(String prefix) {
+    public TrieNode getNode(String prefix) {
         TrieNode current = root;
         for (char c : prefix.toCharArray()) {
             if (!current.getChildren().containsKey(c)) {
@@ -60,28 +60,28 @@ public class Trie {
             return Collections.emptyList();
         }
 
-        Map<String, Integer> suggestions = new HashMap<>();
+        List<Map.Entry<String, Integer>> suggestions = new ArrayList<>();
         findAllWords(prefixNode, suggestions);
 
-        PriorityQueue<Map.Entry<String, Integer>> pq =
-                new PriorityQueue<>(Comparator.comparingInt(Map.Entry::getValue));
-        for (Map.Entry<String, Integer> entry : suggestions.entrySet()) {
-            pq.offer(entry);
-            if (pq.size() > limit) {
-                pq.poll();
+        // Sort by frequency (descending) and then alphabetically
+        suggestions.sort((a, b) -> {
+            int freqCompare = Integer.compare(b.getValue(), a.getValue());
+            if (freqCompare != 0) {
+                return freqCompare;
             }
-        }
+            return a.getKey().compareTo(b.getKey());
+        });
 
         List<String> result = new ArrayList<>();
-        while (!pq.isEmpty()) {
-            result.add(0, pq.poll().getKey());
+        for (int i = 0; i < limit && i < suggestions.size(); i++) {
+            result.add(suggestions.get(i).getKey());
         }
         return result;
     }
 
-    private void findAllWords(TrieNode node, Map<String, Integer> suggestions) {
+    private void findAllWords(TrieNode node, List<Map.Entry<String, Integer>> suggestions) {
         if (node.isEndOfWord()) {
-            suggestions.put(node.getOriginalWord(), node.getFrequency());
+            suggestions.add(new AbstractMap.SimpleEntry<>(node.getOriginalWord(), node.getFrequency()));
         }
         for (TrieNode child : node.getChildren().values()) {
             findAllWords(child, suggestions);

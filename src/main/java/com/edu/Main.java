@@ -14,7 +14,7 @@ public class Main {
             AutocompleteSystem autocomplete = new AutocompleteSystem(5);
             System.out.println("=== Text Autocomplete System ===");
             System.out.println("Type text to get suggestions (e.g., 'hello w' for context-aware)");
-            System.out.println("Type 'config max N' to set max suggestions, 'config fuzzy D' to set fuzzy distance, or 'exit' to quit");
+            System.out.println("Type 'config max N' to set max suggestions, 'config fuzzy D' to set fuzzy distance, 'set lang L' to switch language, 'add lang L PATH' to add language, or 'exit' to quit");
 
             BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
             while (true) {
@@ -43,6 +43,33 @@ public class Main {
                         }
                     } else {
                         System.out.println("Invalid config command");
+                    }
+                    continue;
+                }
+                if (input.startsWith("set lang ")) {
+                    String[] parts = input.split("\\s+");
+                    if (parts.length >= 3) {
+                        String lang = parts[2];
+                        try {
+                            autocomplete.setLanguage(lang);
+                            System.out.println("Language set to " + lang);
+                        } catch (IllegalArgumentException e) {
+                            System.out.println(e.getMessage());
+                        }
+                    } else {
+                        System.out.println("Invalid set lang command");
+                    }
+                    continue;
+                }
+                if (input.startsWith("add lang ")) {
+                    String[] parts = input.split("\\s+", 4);
+                    if (parts.length >= 3) {
+                        String lang = parts[2];
+                        String path = parts.length > 3 ? parts[3] : null;
+                        autocomplete.addLanguage(lang, path);
+                        System.out.println("Language '" + lang + "' added" + (path != null ? " with dictionary " + path : ""));
+                    } else {
+                        System.out.println("Invalid add lang command");
                     }
                     continue;
                 }
@@ -81,7 +108,12 @@ public class Main {
                             if (index >= 0 && index < suggestionList.size()) {
                                 String selectedWord = suggestionList.get(index);
                                 System.out.println("Selected: " + selectedWord);
-                                autocomplete.addWord(selectedWord);
+                                // Increment frequency for learning
+                                Trie trie = autocomplete.tries.get(autocomplete.currentLanguage);
+                                TrieNode node = trie.getNode(selectedWord.toLowerCase());
+                                if (node != null && node.isEndOfWord()) {
+                                    node.incrementFrequency();
+                                }
                             } else {
                                 System.out.println("Invalid selection.");
                             }
