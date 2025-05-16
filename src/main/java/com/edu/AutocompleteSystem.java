@@ -9,8 +9,8 @@ import java.util.*;
 import java.util.concurrent.*;
 
 public class AutocompleteSystem {
-    private final Map<String, Trie> tries;  // Multiple Tries for different languages
-    private String currentLanguage = "en";  // Default language
+    final Map<String, Trie> tries;  // Multiple Tries for different languages
+    String currentLanguage = "en";  // Default language
     int maxSuggestions;
     private final Map<String, Map<String, Integer>> bigrams;
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
